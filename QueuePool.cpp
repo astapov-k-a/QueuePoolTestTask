@@ -25,6 +25,9 @@
  **            своя блокировка. По умолчанию bucket'ов 256, поэтому вероятность того, что на два и более потока будут 
  **            читать/писать из одного бакета. Так же я решил использовать read-write lock, потому что изменение listener'ов
  **            должно быть редким, а чтение частым. Как реализацию read-write lock я выбрал std::shared_mutex
+ **
+ **         6) Так же можно отключить очередь lock-free, заменив на std::queue + std::mutex, задав QUEUE_WITH_MUTEX 1
+ **            и заменить SafeUnorderedMap на std::map + std::mutex, задав SAFE_MAP 0
  **/
 #define QUEUE_WITH_MUTEX 0
 #define SAFE_MAP 1
