@@ -3,7 +3,7 @@
 
 #pragma once
 #include <functional>
-#include <mutex>
+#include <shared_mutex>
 #include <map>
 #include <memory>
 #include <utility>
@@ -62,7 +62,7 @@ template <typename Value, int Tolerance>
 template <
     typename Key,
     typename Value,
-    typename Mutex = std::mutex,
+    typename Mutex = std::shared_mutex,
     size_t NumberOfBuckets = 256,
     typename Hash = std::hash<Key>,
     typename Allocator = std::allocator<Value> 
@@ -73,12 +73,12 @@ class SafeUnorderedMap {
 
     typedef typename  std::allocator_traits<Allocator>::template rebind_alloc< MapPair > MapAllocator;
   struct Reference {
-    typedef std::unique_lock<Mutex> Locker;
+    typedef std::shared_lock<Mutex> Locker;
     Reference(Locker&& locker_val, Value* value_ptr)
         : locker(std::move(locker_val)),
         value(value_ptr) {
     }
-    operator Value* () { return value; }
+    //operator Value* () { return value; }
     operator const Value* () const { return value; }
 
     Value* value;
@@ -97,14 +97,14 @@ class SafeUnorderedMap {
         }
     }
     Reference Get( const Key& key ) {
-        std::unique_lock<Mutex> locker( mutex );
+        std::shared_lock<Mutex> locker( mutex );
         auto found = data.found( key );
         return Reference(
             std::move( locker ),
             ( found != data.end() ) ? found->Get() : nullptr  );
     }
     void Set( const Key& key, const Value& value ) {
-        std::lock_guard<Mutex> locker( mutex );
+        std::unique_lock<Mutex> locker( mutex );
         if constexpr (Element::need_delete) {
           Allocator alloc;
           data.emplace(    key, Element(   alloc.allocate( value )   )    );
@@ -113,7 +113,7 @@ class SafeUnorderedMap {
         }
     }
     void Erase( const Key& key ) {
-        std::lock_guard<Mutex> locker( mutex );
+        std::unique_lock<Mutex> locker( mutex );
         auto found = data.found( key );
         if ( found != data.end() ) {
             MapAllocator alloc;
@@ -124,10 +124,16 @@ class SafeUnorderedMap {
         }
     }
     Reference GetAndCreate( const Key& key ) {
-      std::unique_lock<Mutex> locker( mutex );
-      auto found = data.find( key );
-      if ( found == data.end() ) {
-        found = data.emplace( key, Value() ).first;
+      decltype( data.find(key) ) found;
+      std::shared_lock<Mutex> locker( mutex );
+      bool exist = 1;
+      found = data.find( key );
+      exist = ( found != data.end() );      
+      if ( !exist ) {
+        locker.unlock(); {
+          std::unique_lock<Mutex> ulocker( mutex );
+          found = data.emplace( key, Value() ).first;
+        } locker.lock();
       }
       Value * dd = found->second.Get();
       return Reference(
