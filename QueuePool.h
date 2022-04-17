@@ -107,8 +107,8 @@ namespace mapped_queue {
       std::optional<QueueNode> ret;
       std::lock_guard<std::mutex> locker(queue.queue_mutex);
       auto& data = queue.data;
-      if (!data.empty()) {
-        ret.emplace(data.front());
+      if ( !data.empty() ) {
+        ret.emplace( data.front() );
         //if ( data.front().value == 20002 ) {
         //  int x = 0;
         //}
@@ -152,8 +152,11 @@ namespace mapped_queue {
     }
     static std::optional<QueueNode> Dequeue( Queue& queue ) {
       std::optional<QueueNode> ret;
-      ret.emplace();
-      return queue.pop( ret.value() ) ? ret : std::optional<QueueNode>();
+      ret.emplace(); // @todo постараться убрать лишний вызов конструктора по умолчанию
+      if (   !queue.pop( ret.value() )   ) {
+        ret.reset();
+      }
+      return ret; // единственный return важен для оптимизации RVO/NRVO
     }
   };
 
@@ -314,7 +317,7 @@ namespace mapped_queue {
         if ( !can_enqueue ) {
           std::unique_lock<std::mutex> locker( condit_enqueue_mutex_ ); {
             auto& queue_local = queue_;
-            printf("\nE!!!");
+            //printf("\nE!!!");
             enqueue_condvar_.wait( locker, [&queue_local, &key_value, &the_value]() {
               return !Traits::Enqueue( queue_local, key_value, the_value ); // false если надо продолжить ожидание
               });
@@ -329,10 +332,13 @@ namespace mapped_queue {
       void StartHasValueEvent() {
         consume_condvar_.notify_one();
       }
+      void StartDestructEvent() {
+        consume_condvar_.notify_all();
+      }
       void StartEndCapacityEvent() {
         enqueue_condvar_.notify_one();
       }
-      void Dequeue() {
+      void Dequeue( std::stop_token stop_token ) {
         PRDEBUG( "\nDequeue started" );
         auto node_optional = Traits::Dequeue( queue_ );
         if ( !node_optional.has_value() ) {
@@ -341,8 +347,8 @@ namespace mapped_queue {
             auto & queue_local = queue_;
             consume_condvar_.wait( locker, [&node_optional, &queue_local]() {
               node_optional = Traits::Dequeue( queue_local );
-              return node_optional.has_value(); // false если надо продолжить ожидание
-              } );
+              return node_optional.has_value() || !stop_token.stop_requested(); // false если надо продолжить ожидание
+            } );
           }
         }
         PRDEBUG( "\nDequeue unfreeze" );
@@ -363,8 +369,11 @@ namespace mapped_queue {
       void ConsumerThreadFunction( std::stop_token stop_token ) {
         size_t debug_counter = 0;
         while (1) {
-          if ( stop_token.stop_requested() ) return;
-          Dequeue();
+          if ( stop_token.stop_requested() ) {
+            StartDestructEvent();
+            return;
+          }
+          Dequeue( stop_token );
           ++debug_counter;
           //if (debug_counter == 2000)    TestSleep(25);
         }
