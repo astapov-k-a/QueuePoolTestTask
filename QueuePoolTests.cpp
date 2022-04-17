@@ -1,6 +1,13 @@
 ﻿#include "QueuePool.h"
 
 
+#define QUEUE_WITH_MUTEX 0
+#define SAFE_MAP 0
+void TestSleep( size_t secs ) {
+  using namespace std::chrono_literals;
+  std::this_thread::sleep_for( secs * 1s );
+}
+
 struct TestListener : public mapped_queue::IConsumer<int, int> {
   TestListener( size_t thread_id_number ) : thread_id_number_( thread_id_number ) {
   }
@@ -15,7 +22,32 @@ struct TestListener : public mapped_queue::IConsumer<int, int> {
 };
 
 
-typedef mapped_queue::QueuePool< int, int, 65500> Pool;
+template <typename Key, typename Value, size_t Capacity> using TestTraits = mapped_queue::DefaultTraits<
+    Key,
+    Value,
+    Capacity,
+#   if QUEUE_WITH_MUTEX == 1
+    mapped_queue::QueueWithMutexTraits<Key, Value, Capacity>,
+#   else
+    typename mapped_queue::FixedSizeLockfreeQueueTraits<Key, Value, Capacity>,
+#   endif
+
+#   if SAFE_MAP == 1
+    typename mapped_queue::SafeMapTraits<Key, Value, Capacity>
+#   else
+    mapped_queue::MapWithMutexTraits<Key, Value, Capacity>
+#   endif
+>;
+
+typedef int TestKey;
+typedef int TestValue;
+static constexpr const size_t TestCapacity = 65500;
+typedef mapped_queue::QueuePool< 
+    TestKey, 
+    TestValue, 
+    TestCapacity, 
+    typename TestTraits< TestKey, TestValue, TestCapacity>
+> Pool;
 
 int main(int argc, char* argv[])
 {

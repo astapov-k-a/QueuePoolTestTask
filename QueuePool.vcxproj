@@ -153,9 +153,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="QueuePool.cpp" />
+    <ClCompile Include="QueuePoolTests.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="QueuePool.h" />
     <ClInclude Include="SafeUnorderedMap.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
