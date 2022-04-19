@@ -101,12 +101,25 @@ struct DefaultTraits {
   }
 };
 
+class QueuePoolBase {
+ public:
+  void StopProcessing() {
+    stop_command_.request_stop();
+  }
+  std::stop_token GetStopToken() {
+    return stop_command_.get_token();
+  }
+
+ private:
+  std::stop_source stop_command_;
+};
+
 template <
   typename KeyTn,
   typename ValueTn,
   size_t TotalCapacity,
   typename TraitsTn// = DefaultTraits<KeyTn, ValueTn, TotalCapacity>
-> class QueuePool {
+> class QueuePool : public QueuePoolBase {
  public:
   //constexpr static const size_t kTotalCapacity = TotalCapacityTn;
 
@@ -126,15 +139,12 @@ template <
     This* ret = new (std::nothrow) This();
     if ( ret ) {
       ret->thrd_.reset( new (std::nothrow) std::thread([ret]() {
-        ConsumerThreadFunctionStatic( ret->stop_command_.get_token(), ret );
+        ConsumerThreadFunctionStatic( ret->GetStopToken(), ret);
         }) );
       ret->thrd_->detach();
     }
     printf( "\nCreate finished" );
     return ret;
-  }
-  void StopProcessing() {
-    stop_command_.request_stop();
   }
   void Subscribe( const Key& key, const Listener& listener ) {
     Traits::AddToMap( map_, key, listener );
@@ -222,7 +232,6 @@ template <
   Queue queue_;
   Map map_;
   std::unique_ptr<std::thread> thrd_;
-  std::stop_source stop_command_;
   std::mutex condit_consume_mutex_;
   std::condition_variable consume_condvar_;
   std::mutex condit_enqueue_mutex_;

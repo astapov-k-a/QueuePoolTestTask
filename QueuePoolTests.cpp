@@ -3,6 +3,7 @@
 #include "QueuePoolFixedSizeLockfreeQueueTraits.h"
 #include "QueuePoolMapWithMutexTraits.h"
 #include "QueuePoolSafeMapTraits.h"
+#include "Event.h"
 
 #if __unix__
 #   include <unistd.h>
@@ -13,24 +14,51 @@
 
 #define QUEUE_WITH_MUTEX 0
 #define SAFE_MAP 1
+
+
+
 void TestSleep( size_t secs ) {
   using namespace std::chrono_literals;
   std::this_thread::sleep_for( secs * 1s );
 }
 
-struct TestListener : public mapped_queue::IConsumer<int, int> {
-  TestListener( size_t thread_id_number ) : thread_id_number_( thread_id_number ) {
+struct TestListenerBase : public mapped_queue::IConsumer<int, int> {
+  TestListenerBase(
+      Event * stop_event_value,
+      size_t thread_id_number,
+      size_t final_val )
+      :  thread_id_number_( thread_id_number ),
+         stop_event_( stop_event_value ) {
+    final_counter_ = final_val;
   }
 
   virtual void Consume( int id, const int& value ) override
   {
     assert( id == thread_id_number_ );
-    printf( "\nconsume %d, %d", id, value );
+    printf( "\nconsume %d, %d %u", id, value, result_counter_.load() );
+    ConsumeInternal( id, value );
+    ++result_counter_;
+    if ( NeedFinish() ) stop_event_->NotifyAll();
   }
+  virtual void ConsumeInternal( int id, const int& value ) {}
+  virtual bool NeedFinish() { return 0; }
+
+ protected:
+  static inline std::atomic_uint32_t result_counter_ = 0;
+  static inline std::atomic_uint32_t final_counter_ = 0;
+
  private:
   size_t thread_id_number_;
+  Event * stop_event_;
 };
 
+struct TestListener000 : public TestListenerBase {
+  TestListener000( 
+    Event * stop_event,
+    size_t thread_id_number,
+    size_t final_val ) : TestListenerBase( stop_event, thread_id_number, final_val ) {}
+  virtual bool NeedFinish() { return result_counter_ >= final_counter_; }
+};
 
 template <typename Key, typename Value, size_t Capacity> using TestTraits = mapped_queue::DefaultTraits<
     Key,
@@ -122,14 +150,16 @@ typedef mapped_queue::QueuePool<
 template <typename ListenerTn, typename PoolTn, typename CallbackTn>
 void CreatePool( 
     PoolTn & pool,
+    Event * stop_event,
     std::atomic_int32_t &counter,
     CallbackTn && callback, 
     size_t threads_number,
+    size_t dequeued_wait_limit,
     std::vector< std::unique_ptr< std::jthread > > & threads  ) {
 
   for ( size_t i = 1; i <= threads_number; ++i ) {
     std::shared_ptr< mapped_queue::IConsumer<int,int> > listener = 
-      std::make_shared<ListenerTn>( i );
+      std::make_shared<ListenerTn>( stop_event, i, dequeued_wait_limit );
     pool.Subscribe( i, listener );
   }
 
@@ -161,8 +191,10 @@ int main(int argc, char* argv[])
   vector< unique_ptr< jthread > > threads;
   constexpr const size_t kPushNumber = 1000;
   atomic_int32_t counter = 1;
-  CreatePool<TestListener>( 
+  Event stop_event;
+  CreatePool<TestListener000>( 
     *pool,
+    &stop_event,
     counter,
     [kPushNumber]( Pool & pool, atomic_int32_t& counter, size_t current_thread ) {
       printf("\nthread reset");
@@ -176,8 +208,10 @@ int main(int argc, char* argv[])
       }
       printf( "thread finished" );    
     }, 
-    kThreadSize, 
+    kThreadSize,
+    kThreadSize * (kPushNumber + 1),
     threads );
-  TestSleep( 120 );
+  //TestSleep( 120 );
+  stop_event.Wait();
   return 0;
 }
