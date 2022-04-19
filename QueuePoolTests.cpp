@@ -49,6 +49,45 @@ template <typename Key, typename Value, size_t Capacity> using TestTraits = mapp
 #   endif
 >;
 
+
+template <typename Key, typename Value, size_t Capacity> using TestTraits = mapped_queue::DefaultTraits<
+  Key,
+  Value,
+  Capacity,
+#   if QUEUE_WITH_MUTEX == 1
+  mapped_queue::QueueWithMutexTraits<Key, Value, Capacity>,
+#   else
+  typename mapped_queue::FixedSizeLockfreeQueueTraits<Key, Value, Capacity>,
+#   endif
+
+#   if SAFE_MAP == 1
+  typename mapped_queue::SafeMapTraits<Key, Value, Capacity>
+#   else
+  mapped_queue::MapWithMutexTraits<Key, Value, Capacity>
+#   endif
+>;
+
+template <typename Key, typename Value, size_t Capacity> using TestTraitsQueueMutex = mapped_queue::DefaultTraits<
+  Key,
+  Value,
+  Capacity,
+  mapped_queue::QueueWithMutexTraits<Key, Value, Capacity>,
+  typename mapped_queue::SafeMapTraits<Key, Value, Capacity> >;
+
+template <typename Key, typename Value, size_t Capacity> using TestTraitsQueueLockfree = mapped_queue::DefaultTraits<
+    Key,
+    Value,
+    Capacity,
+    typename mapped_queue::FixedSizeLockfreeQueueTraits<Key, Value, Capacity>,
+    typename mapped_queue::SafeMapTraits<Key, Value, Capacity> >;
+
+template <typename Key, typename Value, size_t Capacity> using TestTraitsMapMutex = mapped_queue::DefaultTraits<
+    Key,
+    Value,
+    Capacity,
+    typename mapped_queue::FixedSizeLockfreeQueueTraits<Key, Value, Capacity>,
+    mapped_queue::MapWithMutexTraits<Key, Value, Capacity> >;
+
 typedef int TestKey;
 typedef int TestValue;
 static constexpr const size_t TestCapacity = 65500;
@@ -59,9 +98,35 @@ typedef mapped_queue::QueuePool<
     typename TestTraits< TestKey, TestValue, TestCapacity>
 > Pool;
 
+typedef mapped_queue::QueuePool< 
+    TestKey, 
+    TestValue, 
+    TestCapacity, 
+    typename TestTraitsQueueMutex< TestKey, TestValue, TestCapacity>
+> PoolQueueMutex;
+
+typedef mapped_queue::QueuePool< 
+    TestKey, 
+    TestValue, 
+    TestCapacity, 
+    typename TestTraitsQueueLockfree< TestKey, TestValue, TestCapacity>
+> PoolQueueLockfree;
+
+typedef mapped_queue::QueuePool< 
+    TestKey, 
+    TestValue, 
+    TestCapacity, 
+    typename TestTraitsMapMutex< TestKey, TestValue, TestCapacity>
+> PoolMapMutex;
+
 int main(int argc, char* argv[])
 {
   std::unique_ptr< Pool > pool ( Pool::Create() );
+
+  // три строки ниже нужны для инстанцирования всех вариантов работы шаблона
+  std::unique_ptr< PoolQueueMutex > pool2 ( PoolQueueMutex::Create() );
+  std::unique_ptr< PoolQueueLockfree > pool3 ( PoolQueueLockfree::Create() );
+  std::unique_ptr< PoolMapMutex > pool4 ( PoolMapMutex::Create() );
   constexpr const size_t kThreadSize = 4;
   for ( size_t i = 1; i <= kThreadSize; ++i ) {
     std::shared_ptr< mapped_queue::IConsumer<int,int> > listener = 

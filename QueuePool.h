@@ -84,8 +84,8 @@ struct DefaultTraits {
   static bool Enqueue( Queue& queue, const Key& key_value, const Value& the_value ) {
     return QueueTraits::Enqueue( queue, key_value, the_value );
   }
-  static std::optional<QueueNode> Dequeue( Queue& queue ) {
-    return QueueTraits::Dequeue( queue );
+  static bool Dequeue( Queue& queue, QueueNode & result ) {
+    return QueueTraits::Dequeue( queue,result );
   }
   static void AddToMap(
       Map& map,
@@ -171,19 +171,19 @@ template <
   }
   void Dequeue( std::stop_token stop_token ) {
     PRDEBUG( "\nDequeue started" );
-    auto node_optional = Traits::Dequeue( queue_ );
-    if ( !node_optional.has_value() ) {
+    thread_local QueueNode node_local; // thread_local нужен, чтобы убрать избыточный вызов конструктора по умолчанию
+    QueueNode & node = * (&node_local);
+    bool has_value = Traits::Dequeue( queue_, node );
+    if ( !has_value ) {
       PRDEBUG("\nDequeue freeze");
       std::unique_lock<std::mutex> locker( condit_consume_mutex_ ); {
         auto & queue_local = queue_;
-        consume_condvar_.wait( locker, [&node_optional, &queue_local, &stop_token]() {
-          node_optional = Traits::Dequeue( queue_local );
-          return node_optional.has_value() || !stop_token.stop_requested(); // false если надо продолжить ожидание
+        consume_condvar_.wait( locker, [&node, &has_value, &queue_local, &stop_token]() {
+          has_value = Traits::Dequeue( queue_local, node );
+          return has_value || !stop_token.stop_requested(); // false если надо продолжить ожидание
         } );
       }
     }
-    PRDEBUG( "\nDequeue unfreeze" );
-    const auto & node = node_optional.value();
     PRDEBUG("\nDequeue unfreeze value = %u %u", node. key, node.value );
     auto listener = Traits::GetFromMap( map_, node.key );
     PRDEBUG("\nDequeue unfreeze listener");

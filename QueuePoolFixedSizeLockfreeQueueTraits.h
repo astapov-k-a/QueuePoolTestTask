@@ -43,13 +43,8 @@ template <
   static bool Enqueue( Queue& queue, const Key& key_value, const Value& the_value ) {
     return queue.bounded_push(   QueueNode( key_value, the_value )   );
   }
-  static std::optional<QueueNode> Dequeue( Queue& queue ) {
-    std::optional<QueueNode> ret;
-    ret.emplace(); // @todo постараться убрать лишний вызов конструктора по умолчанию
-    if (   !queue.pop( ret.value() )   ) {
-      ret.reset();
-    }
-    return ret; // единственный return важен для оптимизации RVO/NRVO
+  static bool Dequeue( Queue& queue, QueueNode & result ) {
+    return queue.pop( result );
   }
 };
 

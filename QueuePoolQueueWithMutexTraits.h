@@ -31,6 +31,10 @@ template <
       :  key( key_value ),
       value( the_value ) {
     }
+    QueueNode( const QueueNode &  ) = default;
+    QueueNode(       QueueNode && ) = default;
+    QueueNode & operator=( const QueueNode &  ) = default;
+    QueueNode & operator=(       QueueNode && ) = default;
     Key key;
     Value value;
   };
@@ -45,18 +49,19 @@ template <
     data.emplace_back(key_value, the_value);
     return 1;
   }
-  static std::optional<QueueNode> Dequeue( Queue& queue ) {
+  static bool Dequeue( Queue& queue, QueueNode & result ) {
     std::optional<QueueNode> ret;
     std::lock_guard<std::mutex> locker(queue.queue_mutex);
     auto& data = queue.data;
     if ( !data.empty() ) {
-      ret.emplace( data.front() );
+      ret = data.front();
+      data.pop_front();
       //if ( data.front().value == 20002 ) {
       //  int x = 0;
       //}
-      data.pop_front();
+      return 1;
     }
-    return std::move(ret);
+    return 0;
   }
 };
 
