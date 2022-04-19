@@ -180,10 +180,11 @@ template <
         auto & queue_local = queue_;
         consume_condvar_.wait( locker, [&node, &has_value, &queue_local, &stop_token]() {
           has_value = Traits::Dequeue( queue_local, node );
-          return has_value || !stop_token.stop_requested(); // false если надо продолжить ожидание
+          return has_value || stop_token.stop_requested(); // false если надо продолжить ожидание
         } );
       }
     }
+    if ( stop_token.stop_requested() ) return;
     PRDEBUG("\nDequeue unfreeze value = %u %u", node. key, node.value );
     auto listener = Traits::GetFromMap( map_, node.key );
     PRDEBUG("\nDequeue unfreeze listener");
@@ -192,8 +193,7 @@ template <
       PRDEBUG("\nDequeue start consume");
       listener->Consume( node.key, value );
       StartEndCapacityEvent();
-    }
-    else {
+    } else {
       PROCESS_ERROR("Unknown queue");
     }
   }

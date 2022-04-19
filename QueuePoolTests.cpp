@@ -119,6 +119,11 @@ typedef mapped_queue::QueuePool<
     typename TestTraitsMapMutex< TestKey, TestValue, TestCapacity>
 > PoolMapMutex;
 
+template <typename PoolTn, typename CallbackTn>
+void CreatePool( PoolTn & pool, CallbackTn && callback ) {
+
+}
+
 int main(int argc, char* argv[])
 {
   std::unique_ptr< Pool > pool ( Pool::Create() );
@@ -159,6 +164,6 @@ int main(int argc, char* argv[])
     thread_ptr->detach();
     printf( "\nthread detach" );
   }
-  TestSleep( 10000 );
+  TestSleep( 120 );
   return 0;
 }
