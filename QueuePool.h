@@ -50,12 +50,8 @@
 #include <thread>
 #include <optional>
 #include <stop_token>
-
-#if __unix__
-#   include <unistd.h>
-#else
-#   include <windows.h>
-#endif
+#include "QueuePoolFixedSizeLockfreeQueueTraits.h"
+#include "QueuePoolSafeMapTraits.h"
 
 
 //#define PRDEBUG printf
@@ -69,8 +65,8 @@ template <
     typename KeyTn, 
     typename ValueTn, 
     size_t CapacityTn,
-    typename QueueTraitsTn,// = FixedSizeLockfreeQueueTraits<KeyTn, ValueTn, CapacityTn>,
-    typename MapTraitsTn >// = SafeMapTraits<KeyTn, ValueTn, CapacityTn>  >
+    typename QueueTraitsTn = FixedSizeLockfreeQueueTraits<KeyTn, ValueTn, CapacityTn>,
+    typename MapTraitsTn   = SafeMapTraits<KeyTn, ValueTn, CapacityTn>  >
 struct DefaultTraits {
   constexpr static const size_t Capacity = CapacityTn;
 

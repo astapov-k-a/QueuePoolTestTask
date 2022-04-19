@@ -4,6 +4,12 @@
 #include "QueuePoolMapWithMutexTraits.h"
 #include "QueuePoolSafeMapTraits.h"
 
+#if __unix__
+#   include <unistd.h>
+#else
+#   include <windows.h>
+#endif
+
 
 #define QUEUE_WITH_MUTEX 0
 #define SAFE_MAP 1
