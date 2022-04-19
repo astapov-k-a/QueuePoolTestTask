@@ -119,9 +119,33 @@ typedef mapped_queue::QueuePool<
     typename TestTraitsMapMutex< TestKey, TestValue, TestCapacity>
 > PoolMapMutex;
 
-template <typename PoolTn, typename CallbackTn>
-void CreatePool( PoolTn & pool, CallbackTn && callback ) {
+template <typename ListenerTn, typename PoolTn, typename CallbackTn>
+void CreatePool( 
+    PoolTn & pool,
+    std::atomic_int32_t &counter,
+    CallbackTn && callback, 
+    size_t threads_number,
+    std::vector< std::unique_ptr< std::jthread > > & threads  ) {
 
+  for ( size_t i = 1; i <= threads_number; ++i ) {
+    std::shared_ptr< mapped_queue::IConsumer<int,int> > listener = 
+      std::make_shared<ListenerTn>( i );
+    pool.Subscribe( i, listener );
+  }
+
+  using namespace std;
+  threads.resize( threads_number );
+  atomic_int32_t thread_counter = 0;
+  for ( auto & thread_ptr : threads ) {
+    ++thread_counter;
+    size_t current_thread = thread_counter;
+    thread_ptr.reset( new jthread( [&pool, &counter, &callback, current_thread](){
+        callback( pool, counter, current_thread );
+      } ) );
+    printf( "\nthread AFTER reset" );
+    thread_ptr->detach();
+    printf( "\nthread detach" );
+  }
 }
 
 int main(int argc, char* argv[])
@@ -133,37 +157,27 @@ int main(int argc, char* argv[])
   std::unique_ptr< PoolQueueLockfree > pool3 ( PoolQueueLockfree::Create() );
   std::unique_ptr< PoolMapMutex > pool4 ( PoolMapMutex::Create() );
   constexpr const size_t kThreadSize = 4;
-  for ( size_t i = 1; i <= kThreadSize; ++i ) {
-    std::shared_ptr< mapped_queue::IConsumer<int,int> > listener = 
-                                           std::make_shared<TestListener>( i );
-    pool->Subscribe( i, listener );
-  }
-
   using namespace std;
   vector< unique_ptr< jthread > > threads;
   constexpr const size_t kPushNumber = 1000;
-  threads.resize( kThreadSize );
   atomic_int32_t counter = 1;
-  atomic_int32_t thread_counter = 0;
-  for ( auto & thread_ptr : threads ) {
-    ++thread_counter;
-    size_t current_thread = thread_counter;
-    thread_ptr.reset( new jthread( [&pool, &counter, current_thread](){
-        printf("\nthread reset");
-        for ( size_t i = 0; i <= kPushNumber; ++i ) {
-          //if ( i == kPushNumber/2 )    TestSleep(25);
-          size_t selected_queue = current_thread;
-          size_t current_counter = counter;
-          printf( "\nenqueue call (thr=%u) {queue=%u val=%u} %u", current_thread, selected_queue, current_counter, i );
-          pool->Enqueue( selected_queue, current_counter );
-          ++counter;
-        }
-        printf( "thread finished" );
-    } ) );
-    printf( "\nthread AFTER reset" );
-    thread_ptr->detach();
-    printf( "\nthread detach" );
-  }
+  CreatePool<TestListener>( 
+    *pool,
+    counter,
+    [kPushNumber]( Pool & pool, atomic_int32_t& counter, size_t current_thread ) {
+      printf("\nthread reset");
+      for ( size_t i = 0; i <= kPushNumber; ++i ) {
+        //if ( i == kPushNumber/2 )    TestSleep(25);
+        size_t selected_queue = current_thread;
+        size_t current_counter = counter;
+        printf( "\nenqueue call (thr=%u) {queue=%u val=%u} %u", current_thread, selected_queue, current_counter, i );
+        pool.Enqueue( selected_queue, current_counter );
+        ++counter;
+      }
+      printf( "thread finished" );    
+    }, 
+    kThreadSize, 
+    threads );
   TestSleep( 120 );
   return 0;
 }
