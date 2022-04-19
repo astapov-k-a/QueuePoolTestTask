@@ -1,8 +1,12 @@
 ﻿#include "QueuePool.h"
+#include "QueuePoolQueueWithMutexTraits.h"
+#include "QueuePoolFixedSizeLockfreeQueueTraits.h"
+#include "QueuePoolMapWithMutexTraits.h"
+#include "QueuePoolSafeMapTraits.h"
 
 
 #define QUEUE_WITH_MUTEX 0
-#define SAFE_MAP 0
+#define SAFE_MAP 1
 void TestSleep( size_t secs ) {
   using namespace std::chrono_literals;
   std::this_thread::sleep_for( secs * 1s );

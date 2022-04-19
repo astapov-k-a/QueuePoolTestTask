@@ -44,17 +44,12 @@
 **/
 #define PROCESS_ERROR(Text) { printf("ERROR %s", Text); }
 
-#  include "SafeUnorderedMap.h"
-#include <boost/lockfree/queue.hpp>
-#include <list>
+#include "QueuePoolIConsumer.h"
 #include <memory>
-#include <array>
 #include <mutex>
-#include <type_traits>
 #include <thread>
 #include <optional>
-#include <map>
-#include <new>
+#include <stop_token>
 
 #if __unix__
 #   include <unistd.h>
@@ -70,343 +65,173 @@
 
 namespace mapped_queue {
 
-  template <typename Key, typename Value>
-  struct IConsumer
-  {
-    IConsumer() {}
-    virtual void Consume( Key id, const Value& value ) {
-      id;
-      value;
-    }
-  };
-
-  template < 
-      typename KeyTn, 
-      typename ValueTn, 
-      size_t CapacityTn>
-  struct QueueWithMutexTraits {
-    constexpr static const size_t Capacity = CapacityTn;
-
-    typedef KeyTn Key;
-    typedef ValueTn Value;
-    typedef std::shared_ptr< IConsumer<Key, Value> > Listener;
-
-    struct QueueNode {
-      QueueNode() {}
-      QueueNode(
-        const Key& key_value,
-        const Value& the_value )
-        :  key( key_value ),
-        value( the_value ) {
-      }
-      Key key;
-      Value value;
-    };
-
-    struct Queue {
-      std::list<QueueNode> data;
-      std::mutex queue_mutex;
-    };
-    static bool Enqueue( Queue& queue, const Key& key_value, const Value& the_value ) {
-      std::lock_guard<std::mutex> locker(queue.queue_mutex);
-      auto& data = queue.data;
-      data.emplace_back(key_value, the_value);
-      return 1;
-    }
-    static std::optional<QueueNode> Dequeue( Queue& queue ) {
-      std::optional<QueueNode> ret;
-      std::lock_guard<std::mutex> locker(queue.queue_mutex);
-      auto& data = queue.data;
-      if ( !data.empty() ) {
-        ret.emplace( data.front() );
-        //if ( data.front().value == 20002 ) {
-        //  int x = 0;
-        //}
-        data.pop_front();
-      }
-      return std::move(ret);
-    }
-  };
-
-
-  template < 
-      typename KeyTn, 
-      typename ValueTn, 
-      size_t CapacityTn>
-  struct FixedSizeLockfreeQueueTraits {
-    constexpr static const size_t Capacity = CapacityTn;
-
-    typedef KeyTn Key;
-    typedef ValueTn Value;
-    typedef std::shared_ptr< IConsumer<Key, Value> > Listener;
-
-    struct QueueNode {
-      QueueNode() {}
-      QueueNode(
-        const Key& key_value,
-        const Value& the_value )
-        :  key( key_value ),
-        value( the_value ) {
-      }
-      Key key;
-      Value value;
-    };
-
-    typedef boost::lockfree::queue<
-      QueueNode,
-      boost::lockfree::fixed_sized<true>,
-      boost::lockfree::capacity<Capacity> > Queue;
-
-    static bool Enqueue( Queue& queue, const Key& key_value, const Value& the_value ) {
-      return queue.bounded_push(   QueueNode( key_value, the_value )   );
-    }
-    static std::optional<QueueNode> Dequeue( Queue& queue ) {
-      std::optional<QueueNode> ret;
-      ret.emplace(); // @todo постараться убрать лишний вызов конструктора по умолчанию
-      if (   !queue.pop( ret.value() )   ) {
-        ret.reset();
-      }
-      return ret; // единственный return важен для оптимизации RVO/NRVO
-    }
-  };
-
-  template < 
+template < 
     typename KeyTn, 
     typename ValueTn, 
-    size_t CapacityTn >
-  struct MapWithMutexTraits {
-    constexpr static const size_t Capacity = CapacityTn;
+    size_t CapacityTn,
+    typename QueueTraitsTn,// = FixedSizeLockfreeQueueTraits<KeyTn, ValueTn, CapacityTn>,
+    typename MapTraitsTn >// = SafeMapTraits<KeyTn, ValueTn, CapacityTn>  >
+struct DefaultTraits {
+  constexpr static const size_t Capacity = CapacityTn;
 
-    typedef KeyTn Key;
-    typedef ValueTn Value;
-    typedef std::shared_ptr< IConsumer<Key, Value> > Listener;
+  typedef KeyTn Key;
+  typedef ValueTn Value;
+  typedef std::shared_ptr< IConsumer<Key, Value> > Listener;
+  typedef QueueTraitsTn QueueTraits;
+  typedef MapTraitsTn MapTraits;
 
-    struct Map {
-      std::map<Key, Listener> data;
-      std::mutex map_mutex;
-    };
-    static void AddToMap(
+  typedef QueueTraits::QueueNode QueueNode;
+  typedef QueueTraits::Queue Queue;
+  typedef MapTraits::Map Map;
+
+
+  static bool Enqueue( Queue& queue, const Key& key_value, const Value& the_value ) {
+    return QueueTraits::Enqueue( queue, key_value, the_value );
+  }
+  static std::optional<QueueNode> Dequeue( Queue& queue ) {
+    return QueueTraits::Dequeue( queue );
+  }
+  static void AddToMap(
       Map& map,
       const Key& key_value,
-      const Listener& listener_value) {
-      std::lock_guard<std::mutex> locker( map.map_mutex );
-      auto& data = map.data;
-      data[key_value] = listener_value;
+      const Listener& listener_value ) {
+    MapTraits::AddToMap( map, key_value, listener_value );
+  }
+  static void ExcludeFromMap( const Map& map, const Key& key_value ) {
+    MapTraits::ExcludeFromMap( map, key_value );
+  }
+  static Listener GetFromMap( Map& map, const Key& key_value ) {
+    return MapTraits::GetFromMap( map, key_value );
+  }
+};
+
+template <
+  typename KeyTn,
+  typename ValueTn,
+  size_t TotalCapacity,
+  typename TraitsTn// = DefaultTraits<KeyTn, ValueTn, TotalCapacity>
+> class QueuePool {
+ public:
+  //constexpr static const size_t kTotalCapacity = TotalCapacityTn;
+
+  typedef QueuePool<KeyTn, ValueTn, TotalCapacity, TraitsTn> This;
+  typedef KeyTn Key;
+  typedef ValueTn Value;
+  typedef TraitsTn Traits;
+
+  typedef typename Traits::Queue     Queue;
+  typedef typename Traits::QueueNode QueueNode;
+  typedef typename Traits::Map       Map;
+  typedef typename Traits::Listener Listener;
+
+  // Плохой тон - создавать поток в конструкторе. Поэтому делаем фабричный метод
+  static This* Create() {
+    printf("\nCreate start");
+    This* ret = new (std::nothrow) This();
+    if ( ret ) {
+      ret->thrd_.reset( new (std::nothrow) std::thread([ret]() {
+        ConsumerThreadFunctionStatic( ret->stop_command_.get_token(), ret );
+        }) );
+      ret->thrd_->detach();
     }
-    static void ExcludeFromMap( const Map& map, const Key& key_value ) {
-      std::lock_guard<std::mutex> locker( map.map_mutex );
-      auto& data = map.data;
-      data.erase(key_value);
+    printf( "\nCreate finished" );
+    return ret;
+  }
+  void StopProcessing() {
+    stop_command_.request_stop();
+  }
+  void Subscribe( const Key& key, const Listener& listener ) {
+    Traits::AddToMap( map_, key, listener );
+  }
+  void Unsubscribe( const Key& key ) {
+    Traits::ExcludeFromMap( map_, key );
+  }
+  void Enqueue( const Key& key_value, const Value& the_value ) {
+    printf( "\nEnqueue %u %u", key_value, the_value );
+    bool can_enqueue = Traits::Enqueue( queue_, key_value, the_value );
+    if ( !can_enqueue ) {
+      std::unique_lock<std::mutex> locker( condit_enqueue_mutex_ ); {
+        auto& queue_local = queue_;
+        //printf("\nE!!!");
+        enqueue_condvar_.wait( locker, [&queue_local, &key_value, &the_value]() {
+          return !Traits::Enqueue( queue_local, key_value, the_value ); // false если надо продолжить ожидание
+          });
+      }
     }
-    static Listener GetFromMap( Map& map, const Key& key_value ) {
-      const std::lock_guard<std::mutex> locker( map.map_mutex );
-      auto& data = map.data;
-      auto iter = data.find( key_value );
-      if ( iter != data.end() ) {
-        return iter->second;
+    StartHasValueEvent();
+  }
+
+ protected:
+  QueuePool() {
+  }
+  void StartHasValueEvent() {
+    consume_condvar_.notify_one();
+  }
+  void StartDestructEvent() {
+    consume_condvar_.notify_all();
+  }
+  void StartEndCapacityEvent() {
+    enqueue_condvar_.notify_one();
+  }
+  void Dequeue( std::stop_token stop_token ) {
+    PRDEBUG( "\nDequeue started" );
+    auto node_optional = Traits::Dequeue( queue_ );
+    if ( !node_optional.has_value() ) {
+      PRDEBUG("\nDequeue freeze");
+      std::unique_lock<std::mutex> locker( condit_consume_mutex_ ); {
+        auto & queue_local = queue_;
+        consume_condvar_.wait( locker, [&node_optional, &queue_local, &stop_token]() {
+          node_optional = Traits::Dequeue( queue_local );
+          return node_optional.has_value() || !stop_token.stop_requested(); // false если надо продолжить ожидание
+        } );
       }
-      return Listener();
     }
-  };
-
-
-  template < 
-    typename KeyTn, 
-    typename ValueTn, 
-    size_t CapacityTn >
-    struct SafeMapTraits {
-    constexpr static const size_t Capacity = CapacityTn;
-
-    typedef KeyTn Key;
-    typedef ValueTn Value;
-    typedef std::shared_ptr< IConsumer<Key, Value> > Listener;
-    typedef SafeUnorderedMap< Key, Listener > Map;
-
-    static void AddToMap(
-      Map& map,
-      const Key& key_value,
-      const Listener& listener_value) {
-      auto& data = map;
-      data.Set( key_value, listener_value );
+    PRDEBUG( "\nDequeue unfreeze" );
+    const auto & node = node_optional.value();
+    PRDEBUG("\nDequeue unfreeze value = %u %u", node. key, node.value );
+    auto listener = Traits::GetFromMap( map_, node.key );
+    PRDEBUG("\nDequeue unfreeze listener");
+    if ( (bool)listener ) {
+      auto& value = node.value;
+      PRDEBUG("\nDequeue start consume");
+      listener->Consume( node.key, value );
+      StartEndCapacityEvent();
     }
-    static void ExcludeFromMap( const Map& map, const Key& key_value ) {
-      std::lock_guard<std::mutex> locker( map.map_mutex );
-      auto& data = map.data;
-      auto& data = map;
-      data.erase(key_value);
+    else {
+      PROCESS_ERROR("Unknown queue");
     }
-    static Listener GetFromMap( Map& map, const Key& key_value ) {
-      return *map.GetAndCreate( key_value );
+  }
+  void ConsumerThreadFunction( std::stop_token stop_token ) {
+    size_t debug_counter = 0;
+    while (1) {
+      if ( stop_token.stop_requested() ) {
+        StartDestructEvent();
+        return;
+      }
+      Dequeue( stop_token );
+      ++debug_counter;
+      //if (debug_counter == 2000)    TestSleep(25);
     }
-  };
+  }
 
-  template < 
-      typename KeyTn, 
-      typename ValueTn, 
-      size_t CapacityTn,
-      typename QueueTraitsTn = FixedSizeLockfreeQueueTraits<KeyTn, ValueTn, CapacityTn>,
-      typename MapTraitsTn = SafeMapTraits<KeyTn, ValueTn, CapacityTn>  >
-  struct DefaultTraits {
-    constexpr static const size_t Capacity = CapacityTn;
-
-    typedef KeyTn Key;
-    typedef ValueTn Value;
-    typedef std::shared_ptr< IConsumer<Key, Value> > Listener;
-    typedef QueueTraitsTn QueueTraits;
-    typedef MapTraitsTn MapTraits;
-
-    typedef QueueTraits::QueueNode QueueNode;
-    typedef QueueTraits::Queue Queue;
-    typedef MapTraits::Map Map;
-
-
-    static bool Enqueue( Queue& queue, const Key& key_value, const Value& the_value ) {
-      return QueueTraits::Enqueue( queue, key_value, the_value );
+  static void ConsumerThreadFunctionStatic( std::stop_token stop_token, This* var ) {
+    if ( var ) {
+      var->ConsumerThreadFunction( stop_token );
+    } else {
+      PROCESS_ERROR("Parameter error");
     }
-    static std::optional<QueueNode> Dequeue( Queue& queue ) {
-      return QueueTraits::Dequeue( queue );
-    }
-    static void AddToMap(
-        Map& map,
-        const Key& key_value,
-        const Listener& listener_value ) {
-      MapTraits::AddToMap( map, key_value, listener_value );
-    }
-    static void ExcludeFromMap( const Map& map, const Key& key_value ) {
-      MapTraits::ExcludeFromMap( map, key_value );
-    }
-    static Listener GetFromMap( Map& map, const Key& key_value ) {
-      return MapTraits::GetFromMap( map, key_value );
-    }
-  };
+  }
 
-  template <
-    typename KeyTn,
-    typename ValueTn,
-    size_t TotalCapacity,
-    typename TraitsTn = DefaultTraits<KeyTn, ValueTn, TotalCapacity> >
-    class QueuePool {
-    public:
-      //constexpr static const size_t kTotalCapacity = TotalCapacityTn;
-
-      typedef QueuePool<KeyTn, ValueTn, TotalCapacity, TraitsTn> This;
-      typedef KeyTn Key;
-      typedef ValueTn Value;
-      typedef TraitsTn Traits;
-
-      typedef typename Traits::Queue     Queue;
-      typedef typename Traits::QueueNode QueueNode;
-      typedef typename Traits::Map       Map;
-      typedef typename Traits::Listener Listener;
-
-      // Плохой тон - создавать поток в конструкторе. Поэтому делаем фабричный метод
-      static This* Create() {
-        printf("\nCreate start");
-        This* ret = new (std::nothrow) This();
-        if ( ret ) {
-          ret->thrd_.reset( new (std::nothrow) std::thread([ret]() {
-            ConsumerThreadFunctionStatic( ret->stop_command_.get_token(), ret );
-            }) );
-          ret->thrd_->detach();
-        }
-        printf( "\nCreate finished" );
-        return ret;
-      }
-      void StopProcessing() {
-        stop_command_.request_stop();
-      }
-      void Subscribe( const Key& key, const Listener& listener ) {
-        Traits::AddToMap( map_, key, listener );
-      }
-      void Unsubscribe( const Key& key ) {
-        Traits::ExcludeFromMap( map_, key );
-      }
-      void Enqueue( const Key& key_value, const Value& the_value ) {
-        printf( "\nEnqueue %u %u", key_value, the_value );
-        bool can_enqueue = Traits::Enqueue( queue_, key_value, the_value );
-        if ( !can_enqueue ) {
-          std::unique_lock<std::mutex> locker( condit_enqueue_mutex_ ); {
-            auto& queue_local = queue_;
-            //printf("\nE!!!");
-            enqueue_condvar_.wait( locker, [&queue_local, &key_value, &the_value]() {
-              return !Traits::Enqueue( queue_local, key_value, the_value ); // false если надо продолжить ожидание
-              });
-          }
-        }
-        StartHasValueEvent();
-      }
-
-    protected:
-      QueuePool() {
-      }
-      void StartHasValueEvent() {
-        consume_condvar_.notify_one();
-      }
-      void StartDestructEvent() {
-        consume_condvar_.notify_all();
-      }
-      void StartEndCapacityEvent() {
-        enqueue_condvar_.notify_one();
-      }
-      void Dequeue( std::stop_token stop_token ) {
-        PRDEBUG( "\nDequeue started" );
-        auto node_optional = Traits::Dequeue( queue_ );
-        if ( !node_optional.has_value() ) {
-          PRDEBUG("\nDequeue freeze");
-          std::unique_lock<std::mutex> locker( condit_consume_mutex_ ); {
-            auto & queue_local = queue_;
-            consume_condvar_.wait( locker, [&node_optional, &queue_local]() {
-              node_optional = Traits::Dequeue( queue_local );
-              return node_optional.has_value() || !stop_token.stop_requested(); // false если надо продолжить ожидание
-            } );
-          }
-        }
-        PRDEBUG( "\nDequeue unfreeze" );
-        const auto & node = node_optional.value();
-        PRDEBUG("\nDequeue unfreeze value = %u %u", node. key, node.value );
-        auto listener = Traits::GetFromMap( map_, node.key );
-        PRDEBUG("\nDequeue unfreeze listener");
-        if ( (bool)listener ) {
-          auto& value = node.value;
-          PRDEBUG("\nDequeue start consume");
-          listener->Consume( node.key, value );
-          StartEndCapacityEvent();
-        }
-        else {
-          PROCESS_ERROR("Unknown queue");
-        }
-      }
-      void ConsumerThreadFunction( std::stop_token stop_token ) {
-        size_t debug_counter = 0;
-        while (1) {
-          if ( stop_token.stop_requested() ) {
-            StartDestructEvent();
-            return;
-          }
-          Dequeue( stop_token );
-          ++debug_counter;
-          //if (debug_counter == 2000)    TestSleep(25);
-        }
-      }
-
-      static void ConsumerThreadFunctionStatic( std::stop_token stop_token, This* var ) {
-        if ( var ) {
-          var->ConsumerThreadFunction( stop_token );
-        } else {
-          PROCESS_ERROR("Parameter error");
-        }
-      }
-
-    private:
-      Queue queue_;
-      Map map_;
-      std::unique_ptr<std::thread> thrd_;
-      std::stop_source stop_command_;
-      std::mutex condit_consume_mutex_;
-      std::condition_variable consume_condvar_;
-      std::mutex condit_enqueue_mutex_;
-      std::condition_variable enqueue_condvar_;
-  };
+ private:
+  Queue queue_;
+  Map map_;
+  std::unique_ptr<std::thread> thrd_;
+  std::stop_source stop_command_;
+  std::mutex condit_consume_mutex_;
+  std::condition_variable consume_condvar_;
+  std::mutex condit_enqueue_mutex_;
+  std::condition_variable enqueue_condvar_;
+};
 
 } // namespace mapped_queue
 

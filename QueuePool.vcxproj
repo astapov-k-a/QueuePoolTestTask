@@ -157,6 +157,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="QueuePool.h" />
+    <ClInclude Include="QueuePoolFixedSizeLockfreeQueueTraits.h" />
+    <ClInclude Include="QueuePoolIConsumer.h" />
+    <ClInclude Include="QueuePoolMapWithMutexTraits.h" />
+    <ClInclude Include="QueuePoolQueueWithMutexTraits.h" />
+    <ClInclude Include="QueuePoolSafeMapTraits.h" />
     <ClInclude Include="SafeUnorderedMap.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
