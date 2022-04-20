@@ -52,6 +52,7 @@
 #include <stop_token>
 #include "QueuePoolFixedSizeLockfreeQueueTraits.h"
 #include "QueuePoolSafeMapTraits.h"
+#include "Event.h"
 
 
 //#define PRDEBUG printf
@@ -101,17 +102,69 @@ struct DefaultTraits {
   }
 };
 
+class SignConsumerFinished {
+ public:
+  bool IsConsumersFinished() { return (bool)consumers_left_; }
+  void WaitForConsumersFinished() { event_.Wait(); }
+
+ protected:
+  friend class QueuePoolBase;
+  void IncreaseConsumersLeft() { ++consumers_left_; }
+  void DecreaseConsumersLeft() { 
+    --consumers_left_;
+    if ( consumers_left_ == 0 ) {
+      event_.NotifyAll();
+    }
+  }
+
+ private:
+  std::atomic_size_t consumers_left_ = 0;
+  Event event_;
+};
+
 class QueuePoolBase {
  public:
+  virtual ~QueuePoolBase() {}
   void StopProcessing() {
     stop_command_.request_stop();
+    StartDestructEvent();
+    WaitForConsumersFinished();
   }
   std::stop_token GetStopToken() {
     return stop_command_.get_token();
   }
+  void WaitForConsumersFinished() {    
+    if ( consumers_finished_ ) {
+      consumers_finished_->WaitForConsumersFinished(); 
+    }
+  }
+ 
+ protected:
+  SignConsumerFinished * consumers_finished() const { return consumers_finished_; }
+  void IncreaseConsumersLeft() { 
+    if ( consumers_finished_ ) {
+      consumers_finished_->IncreaseConsumersLeft(); 
+    }
+  }
+  void DecreaseConsumersLeft()  { 
+    if ( consumers_finished_ ) {
+      consumers_finished_->DecreaseConsumersLeft(); 
+    }
+  }
+  void SetConsumersFinished( SignConsumerFinished * value ) { consumers_finished_ = value; }
+  void StartHasValueEvent() {
+    consume_condvar_.notify_one();
+  }
+  void StartDestructEvent() {
+    consume_condvar_.notify_all();
+  }
+  std::condition_variable const &     consume_condvar() const { return consume_condvar_; }
+  std::condition_variable       & get_consume_condvar()       { return consume_condvar_; }
 
  private:
   std::stop_source stop_command_;
+  std::condition_variable consume_condvar_;
+  SignConsumerFinished * consumers_finished_ = nullptr;
 };
 
 template <
@@ -134,10 +187,11 @@ template <
   typedef typename Traits::Listener Listener;
 
   // Плохой тон - создавать поток в конструкторе. Поэтому делаем фабричный метод
-  static This* Create() {
+  static This* Create( SignConsumerFinished * consumers_finished_signature = nullptr ) {
     //printf("\nCreate start");
     This* ret = new (std::nothrow) This();
     if ( ret ) {
+      ret->SetConsumersFinished( consumers_finished_signature );
       ret->thrd_.reset( new (std::nothrow) std::thread([ret]() {
         ConsumerThreadFunctionStatic( ret->GetStopToken(), ret);
         }) );
@@ -145,6 +199,9 @@ template <
     }
     //printf( "\nCreate finished" );
     return ret;
+  }
+  ~QueuePool() { 
+    StopProcessing(); 
   }
   void Subscribe( const Key& key, const Listener& listener ) {
     Traits::AddToMap( map_, key, listener );
@@ -170,12 +227,6 @@ template <
  protected:
   QueuePool() {
   }
-  void StartHasValueEvent() {
-    consume_condvar_.notify_one();
-  }
-  void StartDestructEvent() {
-    consume_condvar_.notify_all();
-  }
   void StartEndCapacityEvent() {
     enqueue_condvar_.notify_one();
   }
@@ -188,7 +239,7 @@ template <
       PRDEBUG("\nDequeue freeze");
       std::unique_lock<std::mutex> locker( condit_consume_mutex_ ); {
         auto & queue_local = queue_;
-        consume_condvar_.wait( locker, [&node, &has_value, &queue_local, &stop_token]() {
+        get_consume_condvar().wait(locker, [&node, &has_value, &queue_local, &stop_token]() {
           has_value = Traits::Dequeue( queue_local, node );
           return has_value || stop_token.stop_requested(); // false если надо продолжить ожидание
         } );
@@ -211,7 +262,6 @@ template <
     size_t debug_counter = 0;
     while (1) {
       if ( stop_token.stop_requested() ) {
-        StartDestructEvent();
         return;
       }
       Dequeue( stop_token );
@@ -222,7 +272,9 @@ template <
 
   static void ConsumerThreadFunctionStatic( std::stop_token stop_token, This* var ) {
     if ( var ) {
+      var->IncreaseConsumersLeft();
       var->ConsumerThreadFunction( stop_token );
+      var->DecreaseConsumersLeft();
     } else {
       PROCESS_ERROR("Parameter error");
     }
@@ -233,7 +285,6 @@ template <
   Map map_;
   std::unique_ptr<std::thread> thrd_;
   std::mutex condit_consume_mutex_;
-  std::condition_variable consume_condvar_;
   std::mutex condit_enqueue_mutex_;
   std::condition_variable enqueue_condvar_;
 };

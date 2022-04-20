@@ -3,7 +3,6 @@
 #include "QueuePoolFixedSizeLockfreeQueueTraits.h"
 #include "QueuePoolMapWithMutexTraits.h"
 #include "QueuePoolSafeMapTraits.h"
-#include "Event.h"
 #include <googletest/gtest.h>
 
 #if __unix__
@@ -61,40 +60,14 @@ struct TestListener000 : public TestListenerBase {
   virtual bool NeedFinish() { return result_counter_ >= final_counter_; }
 };
 
-template <typename Key, typename Value, size_t Capacity> using TestTraits = mapped_queue::DefaultTraits<
-    Key,
-    Value,
-    Capacity,
-#   if QUEUE_WITH_MUTEX == 1
-    mapped_queue::QueueWithMutexTraits<Key, Value, Capacity>,
-#   else
-    typename mapped_queue::FixedSizeLockfreeQueueTraits<Key, Value, Capacity>,
-#   endif
-
-#   if SAFE_MAP == 1
-    typename mapped_queue::SafeMapTraits<Key, Value, Capacity>
-#   else
-    mapped_queue::MapWithMutexTraits<Key, Value, Capacity>
-#   endif
->;
 
 
 template <typename Key, typename Value, size_t Capacity> using TestTraits = mapped_queue::DefaultTraits<
   Key,
   Value,
   Capacity,
-#   if QUEUE_WITH_MUTEX == 1
   mapped_queue::QueueWithMutexTraits<Key, Value, Capacity>,
-#   else
-  typename mapped_queue::FixedSizeLockfreeQueueTraits<Key, Value, Capacity>,
-#   endif
-
-#   if SAFE_MAP == 1
-  typename mapped_queue::SafeMapTraits<Key, Value, Capacity>
-#   else
-  mapped_queue::MapWithMutexTraits<Key, Value, Capacity>
-#   endif
->;
+  mapped_queue::MapWithMutexTraits<Key, Value, Capacity> >;
 
 template <typename Key, typename Value, size_t Capacity> using TestTraitsQueueMutex = mapped_queue::DefaultTraits<
   Key,
@@ -125,7 +98,7 @@ typedef mapped_queue::QueuePool<
     TestValue, 
     TestCapacity, 
     typename TestTraits< TestKey, TestValue, TestCapacity>
-> Pool;
+> PoolWithMutexes;
 
 typedef mapped_queue::QueuePool< 
     TestKey, 
@@ -179,13 +152,10 @@ void CreatePool(
   }
 }
 
-TEST(QueuePool, Test000) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
-  std::unique_ptr< Pool > pool ( Pool::Create() );
-
-  // три строки ниже нужны для инстанцирования всех вариантов работы шаблона
-  std::unique_ptr< PoolQueueMutex > pool2 ( PoolQueueMutex::Create() );
-  std::unique_ptr< PoolQueueLockfree > pool3 ( PoolQueueLockfree::Create() );
-  std::unique_ptr< PoolMapMutex > pool4 ( PoolMapMutex::Create() );
+template <typename PoolTn>
+void Test000( ) {
+  mapped_queue::SignConsumerFinished finished;
+  std::unique_ptr< PoolTn >  pool  (   PoolTn::Create( &finished )   );
   constexpr const size_t kThreadSize = 4;
   using namespace std;
   vector< unique_ptr< jthread > > threads;
@@ -196,7 +166,7 @@ TEST(QueuePool, Test000) { // просто запуск цикла записа�
     *pool,
     &stop_event,
     counter,
-    [kPushNumber]( Pool & pool, atomic_int32_t& counter, size_t current_thread ) {
+    [kPushNumber]( PoolTn & pool, atomic_int32_t& counter, size_t current_thread ) {
       //printf("\nthread reset");
       for ( size_t i = 0; i <= kPushNumber; ++i ) {
         //if ( i == kPushNumber/2 )    TestSleep(25);
@@ -213,7 +183,76 @@ TEST(QueuePool, Test000) { // просто запуск цикла записа�
     threads );
   //TestSleep( 120 );
   stop_event.Wait();
+  pool->StopProcessing();
+  finished.WaitForConsumersFinished();
+}
+
+//TEST( QueuePool, Test000 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+//  Test000< PoolWithMutexes >();  
+//  SUCCEED();
+//}
+//TEST( QueuePool, Test001 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+//  Test000< PoolQueueMutex >();  
+//  SUCCEED();
+//}
+TEST( QueuePool, Test002 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+  Test000< PoolQueueLockfree >();  
+  SUCCEED();
+}
+//TEST( QueuePool, Test003 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+//  Test000< PoolMapMutex >();  
+//  SUCCEED();
+//}
+
+TEST( QueuePool, Test004 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  mapped_queue::SignConsumerFinished finished;
+  std::unique_ptr< PoolQueueLockfree > pool (   PoolQueueLockfree::Create( &finished )   );
+
+  pool->Enqueue( 1, 1 );
+  pool->Enqueue( 1, 2 );
+  pool->Enqueue( 1, 3 );
+  pool->Enqueue( 1, 4 );
+  pool->Enqueue( 2, 1 );
+  pool->Enqueue( 2, 2 );
+  pool->Enqueue( 2, 3 );
+  pool->Enqueue( 2, 4 );
+  Event stop_event;
+  for ( size_t i = 1; i <= 2; ++i ) {
+    std::shared_ptr< mapped_queue::IConsumer<int,int> > listener = 
+      std::make_shared<TestListener000>( &stop_event, i, 8 );
+    pool->Subscribe( i, listener );
+  }
+
+  stop_event.Wait();
   TestSleep( 1 );
+  pool->StopProcessing();
+  finished.WaitForConsumersFinished();
+  SUCCEED();
+}
+
+TEST( QueuePool, Test005 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  mapped_queue::SignConsumerFinished finished;
+  std::unique_ptr< PoolQueueLockfree > pool (   PoolQueueLockfree::Create( &finished )   );
+
+  pool->Enqueue( 1, 1 );
+  pool->Enqueue( 1, 2 );
+  pool->Enqueue( 1, 3 );
+  pool->Enqueue( 1, 4 );
+  pool->Enqueue( 2, 1 );
+  pool->Enqueue( 2, 2 );
+  pool->Enqueue( 2, 3 );
+  pool->Enqueue( 2, 4 );
+  Event stop_event;
+  for ( size_t i = 1; i <= 2; ++i ) {
+    std::shared_ptr< mapped_queue::IConsumer<int,int> > listener = 
+      std::make_shared<TestListener000>( &stop_event, i, 8 );
+    pool->Subscribe( i, listener );
+  }
+
+  stop_event.Wait();
+  TestSleep( 1 );
+  pool.reset();
+  finished.WaitForConsumersFinished();
   SUCCEED();
 }
 
