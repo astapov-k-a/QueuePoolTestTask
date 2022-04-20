@@ -153,10 +153,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="googletest\gtest-all.cc" />
     <ClCompile Include="QueuePoolTests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Event.h" />
+    <ClInclude Include="Header.h" />
     <ClInclude Include="QueuePool.h" />
     <ClInclude Include="QueuePoolFixedSizeLockfreeQueueTraits.h" />
     <ClInclude Include="QueuePoolIConsumer.h" />

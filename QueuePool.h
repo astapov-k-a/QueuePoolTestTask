@@ -135,7 +135,7 @@ template <
 
   // Плохой тон - создавать поток в конструкторе. Поэтому делаем фабричный метод
   static This* Create() {
-    printf("\nCreate start");
+    //printf("\nCreate start");
     This* ret = new (std::nothrow) This();
     if ( ret ) {
       ret->thrd_.reset( new (std::nothrow) std::thread([ret]() {
@@ -143,7 +143,7 @@ template <
         }) );
       ret->thrd_->detach();
     }
-    printf( "\nCreate finished" );
+    //printf( "\nCreate finished" );
     return ret;
   }
   void Subscribe( const Key& key, const Listener& listener ) {
@@ -153,7 +153,7 @@ template <
     Traits::ExcludeFromMap( map_, key );
   }
   void Enqueue( const Key& key_value, const Value& the_value ) {
-    printf( "\nEnqueue %u %u", key_value, the_value );
+    //printf( "\nEnqueue %u %u", key_value, the_value );
     bool can_enqueue = Traits::Enqueue( queue_, key_value, the_value );
     if ( !can_enqueue ) {
       std::unique_lock<std::mutex> locker( condit_enqueue_mutex_ ); {

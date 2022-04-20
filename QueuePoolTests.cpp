@@ -4,6 +4,7 @@
 #include "QueuePoolMapWithMutexTraits.h"
 #include "QueuePoolSafeMapTraits.h"
 #include "Event.h"
+#include <googletest/gtest.h>
 
 #if __unix__
 #   include <unistd.h>
@@ -35,7 +36,7 @@ struct TestListenerBase : public mapped_queue::IConsumer<int, int> {
   virtual void Consume( int id, const int& value ) override
   {
     assert( id == thread_id_number_ );
-    printf( "\nconsume %d, %d %u", id, value, result_counter_.load() );
+    //printf( "\nconsume %d, %d %u", id, value, result_counter_.load() );
     ConsumeInternal( id, value );
     ++result_counter_;
     if ( NeedFinish() ) stop_event_->NotifyAll();
@@ -172,14 +173,13 @@ void CreatePool(
     thread_ptr.reset( new jthread( [&pool, &counter, &callback, current_thread](){
         callback( pool, counter, current_thread );
       } ) );
-    printf( "\nthread AFTER reset" );
+    //printf( "\nthread AFTER reset" );
     thread_ptr->detach();
-    printf( "\nthread detach" );
+    //printf( "\nthread detach" );
   }
 }
 
-int main(int argc, char* argv[])
-{
+TEST(QueuePool, Test000) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
   std::unique_ptr< Pool > pool ( Pool::Create() );
 
   // три строки ниже нужны для инстанцирования всех вариантов работы шаблона
@@ -197,21 +197,29 @@ int main(int argc, char* argv[])
     &stop_event,
     counter,
     [kPushNumber]( Pool & pool, atomic_int32_t& counter, size_t current_thread ) {
-      printf("\nthread reset");
+      //printf("\nthread reset");
       for ( size_t i = 0; i <= kPushNumber; ++i ) {
         //if ( i == kPushNumber/2 )    TestSleep(25);
         size_t selected_queue = current_thread;
         size_t current_counter = counter;
-        printf( "\nenqueue call (thr=%u) {queue=%u val=%u} %u", current_thread, selected_queue, current_counter, i );
+        //printf( "\nenqueue call (thr=%u) {queue=%u val=%u} %u", current_thread, selected_queue, current_counter, i );
         pool.Enqueue( selected_queue, current_counter );
         ++counter;
       }
-      printf( "thread finished" );    
+      //printf( "thread finished" );    
     }, 
     kThreadSize,
     kThreadSize * (kPushNumber + 1),
     threads );
   //TestSleep( 120 );
   stop_event.Wait();
+  TestSleep( 1 );
+  SUCCEED();
+}
+
+int main(int argc, char* argv[])
+{
+  testing::InitGoogleTest();
+  RUN_ALL_TESTS();
   return 0;
 }
