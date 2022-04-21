@@ -31,6 +31,7 @@ struct TestListenerBase : public mapped_queue::IConsumer<int, int> {
          stop_event_( stop_event_value ) {
     final_counter_ = final_val;
   }
+  static void ResetCounter() { result_counter_.store( 0 ); }
 
   virtual void Consume( int id, const int& value ) override
   {
@@ -154,6 +155,7 @@ void CreatePool(
 
 template <typename PoolTn>
 void Test000( ) {
+  TestListenerBase::ResetCounter();
   mapped_queue::SignConsumerFinished finished;
   std::unique_ptr< PoolTn >  pool  (   PoolTn::Create( &finished )   );
   constexpr const size_t kThreadSize = 4;
@@ -185,28 +187,31 @@ void Test000( ) {
   stop_event.Wait();
   pool->StopProcessing();
   finished.WaitForConsumersFinished();
+  //printf("TEST FINISHED");
 }
 
-//TEST( QueuePool, Test000 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
-//  Test000< PoolWithMutexes >();  
-//  SUCCEED();
-//}
-//TEST( QueuePool, Test001 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
-//  Test000< PoolQueueMutex >();  
-//  SUCCEED();
-//}
-TEST( QueuePool, Test002 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+
+TEST( QueuePool, Test000 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
   Test000< PoolQueueLockfree >();  
   SUCCEED();
 }
-//TEST( QueuePool, Test003 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
-//  Test000< PoolMapMutex >();  
-//  SUCCEED();
-//}
+TEST( QueuePool, Test001 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+  Test000< PoolQueueMutex >();  
+  SUCCEED();
+}
+TEST( QueuePool, Test002 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+  Test000< PoolMapMutex >();  
+  SUCCEED();
+}
+TEST( QueuePool, Test003 ) { // просто запуск цикла записать в N потоков - потребить из очереди. Если не зависло, то всё ок
+  Test000< PoolWithMutexes >();  
+  SUCCEED();
+}
 
-TEST( QueuePool, Test004 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+template <typename PoolTn> void Test004() {
+
   mapped_queue::SignConsumerFinished finished;
-  std::unique_ptr< PoolQueueLockfree > pool (   PoolQueueLockfree::Create( &finished )   );
+  std::unique_ptr< PoolTn > pool (   PoolTn::Create( &finished )   );
 
   pool->Enqueue( 1, 1 );
   pool->Enqueue( 1, 2 );
@@ -227,12 +232,27 @@ TEST( QueuePool, Test004 ) { // прерываем с пустой очеред�
   TestSleep( 1 );
   pool->StopProcessing();
   finished.WaitForConsumersFinished();
+}
+TEST( QueuePool, Test004 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test004<PoolQueueLockfree>();
+  SUCCEED();
+}
+TEST( QueuePool, Test005 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test004<PoolQueueMutex>();
+  SUCCEED();
+}
+TEST( QueuePool, Test006 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test004<PoolMapMutex>();
+  SUCCEED();
+}
+TEST( QueuePool, Test007 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test004<PoolWithMutexes>();
   SUCCEED();
 }
 
-TEST( QueuePool, Test005 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+template <typename PoolTn> void Test008() {
   mapped_queue::SignConsumerFinished finished;
-  std::unique_ptr< PoolQueueLockfree > pool (   PoolQueueLockfree::Create( &finished )   );
+  std::unique_ptr< PoolTn > pool (   PoolTn::Create( &finished )   );
 
   pool->Enqueue( 1, 1 );
   pool->Enqueue( 1, 2 );
@@ -253,6 +273,22 @@ TEST( QueuePool, Test005 ) { // прерываем с пустой очеред�
   TestSleep( 1 );
   pool.reset();
   finished.WaitForConsumersFinished();
+}
+
+TEST( QueuePool, Test008 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test008<PoolQueueLockfree>();
+  SUCCEED();
+}
+TEST( QueuePool, Test009 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test008<PoolQueueMutex>();
+  SUCCEED();
+}
+TEST( QueuePool, Test010 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test008<PoolMapMutex>();
+  SUCCEED();
+}
+TEST( QueuePool, Test011 ) { // прерываем с пустой очередью, смотрим, зависнет, или нет
+  Test008<PoolWithMutexes>();
   SUCCEED();
 }
 

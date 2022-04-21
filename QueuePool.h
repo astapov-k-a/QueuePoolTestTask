@@ -232,7 +232,7 @@ template <
   }
   void Dequeue( std::stop_token stop_token ) {
     PRDEBUG( "\nDequeue started" );
-    thread_local QueueNode node_local; // thread_local нужен, чтобы убрать избыточный вызов конструктора по умолчанию
+    /*thread_local*/ QueueNode node_local; // thread_local нужен, чтобы убрать избыточный вызов конструктора по умолчанию
     QueueNode & node = * (&node_local);
     bool has_value = Traits::Dequeue( queue_, node );
     if ( !has_value ) {
@@ -247,6 +247,7 @@ template <
     }
     if ( stop_token.stop_requested() ) return;
     PRDEBUG("\nDequeue unfreeze value = %u %u", node. key, node.value );
+    //printf("\nDequeue unfreeze value = %u %u", node. key, node.value );
     auto listener = Traits::GetFromMap( map_, node.key );
     PRDEBUG("\nDequeue unfreeze listener");
     if ( (bool)listener ) {

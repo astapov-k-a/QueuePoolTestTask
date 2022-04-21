@@ -50,11 +50,10 @@ template <
     return 1;
   }
   static bool Dequeue( Queue& queue, QueueNode & result ) {
-    std::optional<QueueNode> ret;
     std::lock_guard<std::mutex> locker(queue.queue_mutex);
     auto& data = queue.data;
     if ( !data.empty() ) {
-      ret = data.front();
+      result = data.front();
       data.pop_front();
       //if ( data.front().value == 20002 ) {
       //  int x = 0;
