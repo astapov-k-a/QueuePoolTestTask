@@ -62,6 +62,14 @@ template <
     }
     return 0;
   }
+  static bool IsEmpty( const Queue & queue ) {
+    std::lock_guard<std::mutex> locker( ( (Queue&)queue ).queue_mutex);
+    return queue.data.empty();
+  }
+  //static size_t GetSize( const Queue & queue ) {
+  //  std::lock_guard<std::mutex> locker( ( (Queue&)queue ).queue_mutex);
+  //  return queue.data.size();
+  //}
 };
 
 } // namespace mapped_queue

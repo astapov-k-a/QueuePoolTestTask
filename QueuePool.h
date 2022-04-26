@@ -88,6 +88,8 @@ struct DefaultTraits {
   static bool Dequeue( Queue& queue, QueueNode & result ) {
     return QueueTraits::Dequeue( queue,result );
   }
+  static bool IsQueueEmpty( const Queue& queue ) { return QueueTraits::IsEmpty( queue ); }
+  //static size_t GetQueueSize( const Queue& queue ) { return QueueTraits::GetSize( queue ); }
   static void AddToMap(
       Map& map,
       const Key& key_value,
@@ -99,7 +101,7 @@ struct DefaultTraits {
   }
   static Listener GetFromMap( Map& map, const Key& key_value ) {
     return MapTraits::GetFromMap( map, key_value );
-  }
+  } 
 };
 
 class SignConsumerFinished {
@@ -138,6 +140,9 @@ class QueuePoolBase {
       consumers_finished_->WaitForConsumersFinished(); 
     }
   }
+  virtual bool IsQueueEmpty() const { return 1; }
+  //virtual size_t GetQueueSize() const { return 1; }
+  virtual bool GetConsumersNumber() const { return 1; }
  
  protected:
   SignConsumerFinished * consumers_finished() const { return consumers_finished_; }
@@ -210,7 +215,7 @@ template <
     Traits::ExcludeFromMap( map_, key );
   }
   void Enqueue( const Key& key_value, const Value& the_value ) {
-    //printf( "\nEnqueue %u %u", key_value, the_value );
+    printf( "\nEnqueue %u %u", key_value, the_value );
     bool can_enqueue = Traits::Enqueue( queue_, key_value, the_value );
     if ( !can_enqueue ) {
       std::unique_lock<std::mutex> locker( condit_enqueue_mutex_ ); {
@@ -223,6 +228,8 @@ template <
     }
     StartHasValueEvent();
   }
+  virtual bool IsQueueEmpty() const override { return Traits::IsQueueEmpty( queue_ ); }
+  //virtual size_t GetQueueSize() const override { return Traits::GetQueueSize( queue_ ); }
 
  protected:
   QueuePool() {

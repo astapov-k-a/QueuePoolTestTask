@@ -30,6 +30,7 @@ template <
       const Value& the_value )
       :  key( key_value ),
       value( the_value ) {
+      static_assert( Capacity <= 65534 , "Capacity too large");
     }
     Key key;
     Value value;
@@ -46,6 +47,12 @@ template <
   static bool Dequeue( Queue& queue, QueueNode & result ) {
     return queue.pop( result );
   }
+  static bool IsEmpty( const Queue & queue ) {
+    return queue.empty();
+  }
+  //static size_t GetSize( const Queue & queue ) {
+  //  return queue.size();
+  //}
 };
 
 } // namespace mapped_queue
